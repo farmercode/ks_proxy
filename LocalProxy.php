@@ -10,6 +10,7 @@ require "HttpParser.php";
  */
 
 class LocalProxy{
+    const CHANNLE_TIME_OUT = 0.5;
     public $local_server;
 
     /**
@@ -19,9 +20,9 @@ class LocalProxy{
 
     public $server_port = 5730;
 
-    public $remote_proxy_host = '192.168.99.10';
+    public $remoteProxyHost = '192.168.99.10';
 
-    public $remote_proxy_port   = 443;
+    public $remoteProxyPort = 443;
 
     public $server_config = [
         'worker_num'    => 4,
@@ -66,15 +67,31 @@ class LocalProxy{
 
     }
 
+    /**
+     * 服务器接到请求回调
+     * @param $server
+     * @param $fd
+     * @param $from_id
+     * @param $data
+     */
     public function onServerRecv($server,$fd,$from_id,$data){
         echo "recv data:\r\n";
         $http = new HttpParser($data);
         var_dump($http->headers);
         echo "\r\n";
         if($http->headers['request']['type'] == HttpParser::REQUEST_TYPE_CONNECT){
-            $this->establishProxyChannel($server,$fd);
             $this->client_datas[$fd]['data'] = $data;
+            $this->establishProxyChannel($server,$fd);
             $server->send($fd,'HTTP/1.1 200 Connection Established');
+        }else if($http->headers['request']['type'] == HttpParser::REQUEST_TYPE_GET){
+            $channel = $this->getChannelByClientFd($fd);
+            if(empty($channel)){
+                $this->client_datas[$fd]['data'] = $data;
+                $this->establishProxyChannel($server,$fd);
+                $channel = $this->getChannelByClientFd($fd);
+            }else{
+                $channel->send($data);
+            }
         }else{
             //$channel_fd = array_search($fd,$this->channel_pool_map);
             $channel = $this->getChannelByClientFd($fd);
@@ -103,11 +120,17 @@ class LocalProxy{
             /** @var swoole_client  $channel_client */
             $channel_sock = $channel_client->sock;
             $this->channel_pool_map[$channel_client->sock] = $fd;
+            $channel_data = $this->getChannelSendData($channel_sock);
+            if(!empty($channel_data)){
+                $channel_client->send($channel_data);
+                $this->removeChannelSendData($channel_sock);
+            }
         });
         $channel_client->on('receive',array($this,'onChannelRecv'));
         $channel_client->on('error',array($this,'onChannelError'));
         $channel_client->on('close',array($this,'onChannelClose'));
-        $channel_client->connect($this->remote_proxy_host);
+        # 连接远程代理服务器
+        $channel_client->connect($this->remoteProxyHost,$this->remoteProxyPort,self::CHANNLE_TIME_OUT);
         $this->client_to_channel_map[$fd] = $channel_client;
     }
 
@@ -115,6 +138,7 @@ class LocalProxy{
         $channel_fd = $channel_client->sock;
         $client_fd = $this->getClientFdByChannelFd($channel_fd);
         if(!$client_fd) return;
+        echo "channel data:\n".var_dump($data);
         $this->local_server->send($client_fd,$data);
     }
 
@@ -143,9 +167,27 @@ class LocalProxy{
         return isset($this->channel_pool_map[$channel_fd])?$this->channel_pool_map[$channel_fd]:0;
     }
 
+    /**
+     * 获得频道发送数据
+     * @param $channel_fd
+     *
+     * @return bool
+     */
     public function getChannelSendData($channel_fd){
         $client_fd = $this->getClientFdByChannelFd($channel_fd);
         return $this->getClientData($client_fd);
+    }
+
+    /**
+     * 移除当前频道发送内容
+     * @param $channel_fd
+     *
+     * @return bool
+     */
+    public function removeChannelSendData($channel_fd){
+        $client_fd = $this->getClientFdByChannelFd($channel_fd);
+        if(isset($this->client_datas[$client_fd])) unset($this->client_datas[$client_fd]);
+        return true;
     }
 
     public function getClientData($client_fd){
