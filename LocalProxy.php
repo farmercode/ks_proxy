@@ -1,5 +1,6 @@
 <?php
 require "HttpParser.php";
+require "HttpResponse.php";
 
 /**
  * Created by PhpStorm.
@@ -75,27 +76,24 @@ class LocalProxy{
      * @param $data
      */
     public function onServerRecv($server,$fd,$from_id,$data){
-        echo "recv data:\r\n";
+        echo "[$fd]recv data:\r\n";
         $http = new HttpParser($data);
-        var_dump($http->headers);
+        var_dump($data);
         echo "\r\n";
         if($http->headers['request']['type'] == HttpParser::REQUEST_TYPE_CONNECT){
             $this->client_datas[$fd]['data'] = $data;
             $this->establishProxyChannel($server,$fd);
             $server->send($fd,'HTTP/1.1 200 Connection Established');
-        }else if($http->headers['request']['type'] == HttpParser::REQUEST_TYPE_GET){
+        }else{
             $channel = $this->getChannelByClientFd($fd);
             if(empty($channel)){
+                echo "channel not created\n";
+                echo "client fd : $fd \n";
                 $this->client_datas[$fd]['data'] = $data;
                 $this->establishProxyChannel($server,$fd);
-                $channel = $this->getChannelByClientFd($fd);
             }else{
                 $channel->send($data);
             }
-        }else{
-            //$channel_fd = array_search($fd,$this->channel_pool_map);
-            $channel = $this->getChannelByClientFd($fd);
-            $channel->send($data);
         }
     }
 
@@ -111,7 +109,7 @@ class LocalProxy{
      * @return bool
      */
     private function establishProxyChannel($server,$fd){
-        if(isset($this->client_datas[$fd])) return true;
+        //if(isset($this->client_datas[$fd])) return true;
         $channel_client = new swoole_client(SWOOLE_SOCK_TCP,SWOOLE_SOCK_ASYNC);
         $channel_client->set($this->client_config);
         # 通道连接成功回调
@@ -134,12 +132,23 @@ class LocalProxy{
         $this->client_to_channel_map[$fd] = $channel_client;
     }
 
+    /**
+     * 通道数据返回
+     * @param $channel_client
+     * @param $data
+     */
     public function onChannelRecv($channel_client,$data){
         $channel_fd = $channel_client->sock;
         $client_fd = $this->getClientFdByChannelFd($channel_fd);
+        echo "[$channel_fd]=>[$client_fd]\n";
         if(!$client_fd) return;
-        echo "channel data:\n".var_dump($data);
+        echo "[$channel_fd]channel data:".$data;
+        $res = new HttpResponse($data);
+        $content = $res->getResponse();
+        echo "\n\n".$content."\r\n";
         $this->local_server->send($client_fd,$data);
+        #返回内容到客户端以后关闭连接
+        $this->local_server->close($client_fd);
     }
 
     /**
