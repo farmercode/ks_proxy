@@ -47,3 +47,6 @@ class RemoteProxy
         $this->remoteServer->start();
     }
 }
+
+$proxy = new RemoteProxy();
+$proxy->run();
