@@ -8,11 +8,22 @@
  */
 class RemoteProxy
 {
-
+    /**
+     * @var swoole_server swoole_server
+     * swoole远程代理服务器
+     */
     public $remoteServer;
 
+    /**
+     * @var string
+     * 服务器监听地址
+     */
     public $serverHost = '0.0.0.0';
 
+    /**
+     * @var int
+     * 服务器监听端口,https默认使用443端口
+     */
     public  $serverPort = 443;
 
     public $serverConfig = [
@@ -27,6 +38,9 @@ class RemoteProxy
         $this->init();
     }
 
+    /**
+     * 初始化服务器异步回调函数
+     */
     protected function init(){
         $this->remoteServer->on('connect',function($ssl_server,$fd){
             echo 'Client connect:'.$fd."\r\n";
